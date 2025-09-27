@@ -34,6 +34,7 @@ using namespace std;
 #include <pcl/registration/icp.h>
 #include <pcl/registration/ndt.h>
 #include <pcl/console/time.h>   // TicToc
+#include <pcl/common/transforms.h>
 
 PointCloudT pclCloud;
 cc::Vehicle::Control control;
@@ -314,31 +315,32 @@ int main(){
 			//
 			// pose = getPose(transform_matrix);
 
-			Eigen::Matrix4d initT = transform3D(pose.rotation.yaw, pose.rotation.pitch, pose.rotation.roll,
-				pose.position.x, pose.position.y, pose.position.z
-				);
+			Eigen::Matrix4d initT = transform3D(
+			  pose.rotation.yaw, pose.rotation.pitch, pose.rotation.roll,
+			  pose.position.x, pose.position.y, pose.position.z
+			);
 
-			// Apply initial guess to the current scan (source)
-			PointCloudT::Ptr source_init(new PointCloudT);
-			pcl::transformPointCloud(*cloudFiltered, *source_init, initT);
-
-			// Configure and run ICP against the static map (target)
+			// Configure ICP
 			pcl::IterativeClosestPoint<PointT, PointT> icp;
-			icp.setInputSource(source_init);
-			icp.setInputTarget(mapCloud);
+			icp.setInputSource(cloudFiltered);      // raw (filtered) scan as source
+			icp.setInputTarget(mapCloud);           // static map as target
 			icp.setMaximumIterations(30);
-			icp.setMaxCorrespondenceDistance(2.0);     // tune with your map density
+			icp.setMaxCorrespondenceDistance(2.0);
 			icp.setTransformationEpsilon(1e-6);
 			icp.setEuclideanFitnessEpsilon(1e-6);
 
+			// Run ICP (older PCL: align() returns void)
 			PointCloudT::Ptr aligned(new PointCloudT);
-			Eigen::Matrix4d T = initT;                 // fallback = initial guess
-			if (icp.align(*aligned)) {
-				// ICP gives delta from source_init to map; compose with init guess
+			icp.align(*aligned, initT.cast<float>());
+
+			// Check convergence explicitly
+			Eigen::Matrix4d T = initT;  // fallback to previous pose if ICP fails
+			if (icp.hasConverged()) {
+				// getFinalTransformation() already includes the initial guess when one is provided
 				T = icp.getFinalTransformation().cast<double>();
 			}
 
-			// Update the running pose estimate (used by green car)
+			// Update pose used by the green car and later scan transform
 			pose = getPose(T);
 
 			// TODO: Transform scan so it aligns with ego's actual pose and render that scan
