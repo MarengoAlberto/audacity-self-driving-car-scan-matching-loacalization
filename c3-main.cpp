@@ -34,7 +34,6 @@ using namespace std;
 #include <pcl/registration/icp.h>
 #include <pcl/registration/ndt.h>
 #include <pcl/console/time.h>   // TicToc
-#include <pcl/common/transforms.h>
 
 PointCloudT pclCloud;
 cc::Vehicle::Control control;
@@ -101,36 +100,56 @@ void drawCar(Pose pose, int num, Color color, double alpha, pcl::visualization::
 }
 
 
-Eigen::Matrix4d ICP(pcl::PointCloud<PointT>::Ptr target, pcl::PointCloud<PointT>::Ptr source, Pose startPose, int iterations)
-{
-	Eigen::Matrix4d initTransform = transform3D(startPose.rotation.yaw, startPose.rotation.pitch, startPose.rotation.roll, startPose.position.x,
-												startPose.position.y, startPose.position.z);
-	PointCloudT::Ptr transform_source(new PointCloudT);
-	pcl::transformPointCloud(*source, *transform_source, initTransform);
+Eigen::Matrix4d ICP(PointCloudT::Ptr target, PointCloudT::Ptr source, Pose startingPose, int iterations){
 
-	pcl::IterativeClosestPoint<PointT, PointT> icp;
-	icp.setInputSource(transform_source);
-	icp.setInputTarget(target);
-	icp.setMaximumIterations(iterations);
-	icp.setMaxCorrespondenceDistance(2);
+	// Defining a rotation matrix and translation vector
+  	Eigen::Matrix4d transformation_matrix = Eigen::Matrix4d::Identity ();
 
-	PointCloudT::Ptr cloud_icp(new PointCloudT);
-	icp.align(*cloud_icp);
+  	// align source with starting pose
+  	Eigen::Matrix4d initTransform = transform3D(startingPose.rotation.yaw, startingPose.rotation.pitch, startingPose.rotation.roll, startingPose.position.x, startingPose.position.y, startingPose.position.z);
+  	PointCloudT::Ptr transformSource (new PointCloudT);
+  	pcl::transformPointCloud (*source, *transformSource, initTransform);
 
-	Eigen::Matrix4d transformation_matrix = Eigen::Matrix4d::Identity(4, 4);
+  	/*
+  	if( count == 0)
+  		renderPointCloud(viewer, transformSource, "transform_scan_"+to_string(count), Color(1,0,1)); // render corrected scan
+  	*/
 
-	if (icp.hasConverged())
-	{
-		transformation_matrix = icp.getFinalTransformation().cast<double>();
-		transformation_matrix = transformation_matrix * initTransform;
+	pcl::console::TicToc time;
+  	time.tic ();
+  	pcl::IterativeClosestPoint<PointT, PointT> icp;
+  	icp.setMaximumIterations (iterations);
+  	icp.setInputSource (transformSource);
+  	icp.setInputTarget (target);
+	icp.setMaxCorrespondenceDistance (2);
+	//icp.setTransformationEpsilon(0.001);
+	//icp.setEuclideanFitnessEpsilon(.05);
+	//icp.setRANSACOutlierRejectionThreshold (10);
 
-		return transformation_matrix;
-	}
+  	PointCloudT::Ptr cloud_icp (new PointCloudT);  // ICP output point cloud
+  	icp.align (*cloud_icp);
+  	//std::cout << "Applied " << iterations << " ICP iteration(s) in " << time.toc () << " ms" << std::endl;
+
+  	if (icp.hasConverged ())
+  	{
+  		//std::cout << "\nICP has converged, score is " << icp.getFitnessScore () << std::endl;
+  		transformation_matrix = icp.getFinalTransformation ().cast<double>();
+  		transformation_matrix =  transformation_matrix * initTransform;
+  		//print4x4Matrix(transformation_matrix);
+
+
+  		/*
+  		PointCloudT::Ptr corrected_scan (new PointCloudT);
+  		pcl::transformPointCloud (*source, *corrected_scan, transformation_matrix);
+  		if( count == 1)
+  			renderPointCloud(viewer, corrected_scan, "corrected_scan_"+to_string(count), Color(0,1,1)); // render corrected scan
+		*/
+  		return transformation_matrix;
+  	}
 	else
-	{
-		cout << "warning! ICP has not converged!" << endl;
-		return transformation_matrix;
-	}
+  		cout << "WARNING: ICP did not converge" << endl;
+  	return transformation_matrix;
+
 }
 
 
@@ -305,60 +324,30 @@ int main(){
 			// TODO: (Filter scan using voxel filter)
 			pcl::VoxelGrid<PointT> vg;
 			vg.setInputCloud(scanCloud);
-			const float leaf = 0.5f;                  // try 0.3–0.7 if needed
-			vg.setLeafSize(leaf, leaf, leaf);
+			double filterRes = 1.0;
+			vg.setLeafSize(filterRes, filterRes, filterRes);
 			vg.filter(*cloudFiltered);
 
 			// TODO: Find pose transform by using ICP or NDT matching
 			//pose = ....
-			// Eigen::Matrix4d transform_matrix = ICP(mapCloud, cloudFiltered, pose, 30);
-			//
-			// pose = getPose(transform_matrix);
+			Eigen::Matrix4d transform_matrix = ICP(mapCloud, cloudFiltered, pose, 30);
 
-			Eigen::Matrix4d initT = transform3D(
-			  pose.rotation.yaw, pose.rotation.pitch, pose.rotation.roll,
-			  pose.position.x, pose.position.y, pose.position.z
-			);
-
-			pcl::IterativeClosestPoint<PointT, PointT> icp;
-			icp.setInputSource(cloudFiltered);    // filtered live scan
-			icp.setInputTarget(mapCloud);         // static map
-			icp.setMaximumIterations(40);
-			icp.setMaxCorrespondenceDistance(2.0);
-			icp.setTransformationEpsilon(1e-8);
-			icp.setEuclideanFitnessEpsilon(1e-4);
-
-			PointCloudT::Ptr aligned(new PointCloudT);
-			icp.align(*aligned, initT.cast<float>());
-
-			Eigen::Matrix4d T = initT;           // fallback to previous pose
-			if (icp.hasConverged()) {
-				T = icp.getFinalTransformation().cast<double>();
-			}
-			pose = getPose(T);
+			pose = getPose(transform_matrix);
 
 			// TODO: Transform scan so it aligns with ego's actual pose and render that scan
 			// Transform the (filtered) scan into world frame for rendering
-			// PointCloudT::Ptr corrected_scan(new PointCloudT);
-			// pcl::transformPointCloud(*cloudFiltered, *corrected_scan, transform_matrix);
-			//
-			//
-			// // PointCloudT::Ptr corrected_scan (new PointCloudT);
-			// // // Transform the cloud filtered into the corrected scan.
-			// // pcl::transformPointCloud (*cloudFiltered, *corrected_scan, transform);
-			//
-			// viewer->removePointCloud("scan");
-			// // TODO: Change `scanCloud` below to your transformed scan
-			// // renderPointCloud(viewer, scanCloud, "scan", Color(1,0,0) );
-			// renderPointCloud(viewer, corrected_scan, "scan", Color(1, 0, 0));
-
 			PointCloudT::Ptr corrected_scan(new PointCloudT);
-			pcl::transformPointCloud(*cloudFiltered, *corrected_scan,
-									 transform3D(pose.rotation.yaw, pose.rotation.pitch, pose.rotation.roll,
-												 pose.position.x,  pose.position.y,      pose.position.z));
+			pcl::transformPointCloud(*cloudFiltered, *corrected_scan, transform_matrix);
+
+
+			// PointCloudT::Ptr corrected_scan (new PointCloudT);
+			// // Transform the cloud filtered into the corrected scan.
+			// pcl::transformPointCloud (*cloudFiltered, *corrected_scan, transform);
 
 			viewer->removePointCloud("scan");
-			renderPointCloud(viewer, corrected_scan, "scan", Color(1,0,0));
+			// TODO: Change `scanCloud` below to your transformed scan
+			// renderPointCloud(viewer, scanCloud, "scan", Color(1,0,0) );
+			renderPointCloud(viewer, corrected_scan, "scan", Color(1, 0, 0));
 
 			viewer->removeAllShapes();
 			drawCar(pose, 1,  Color(0,1,0), 0.35, viewer);
