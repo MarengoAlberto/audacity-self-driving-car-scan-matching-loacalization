@@ -324,8 +324,8 @@ int main(){
 			pcl::IterativeClosestPoint<PointT, PointT> icp;
 			icp.setInputSource(cloudFiltered);      // raw (filtered) scan as source
 			icp.setInputTarget(mapCloud);           // static map as target
-			icp.setMaximumIterations(30);
-			icp.setMaxCorrespondenceDistance(2.0);
+			icp.setMaximumIterations(100);
+			icp.setMaxCorrespondenceDistance(5.0);
 			icp.setTransformationEpsilon(1e-6);
 			icp.setEuclideanFitnessEpsilon(1e-6);
 
@@ -359,15 +359,9 @@ int main(){
 			// renderPointCloud(viewer, corrected_scan, "scan", Color(1, 0, 0));
 
 			PointCloudT::Ptr corrected_scan(new PointCloudT);
-			pcl::transformPointCloud(*cloudFiltered, *corrected_scan,
-			  transform3D(
-				pose.rotation.yaw, pose.rotation.pitch, pose.rotation.roll,
-				pose.position.x,  pose.position.y,      pose.position.z
-			  )
-			);
+			pcl::transformPointCloud(*cloudFiltered, *corrected_scan, T);
 
 			viewer->removePointCloud("scan");
-			// Show the transformed (world-frame) scan
 			renderPointCloud(viewer, corrected_scan, "scan", Color(1,0,0));
 
 			viewer->removeAllShapes();
