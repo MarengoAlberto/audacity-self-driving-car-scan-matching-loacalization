@@ -218,19 +218,6 @@ struct Tester{
 };
 
 
-Pose PoseFromMatrix(const Eigen::Matrix4d& T) {
-	// Rotation (ZYX → yaw, pitch, roll)
-	double yaw   = std::atan2(T(1,0), T(0,0));
-	double pitch = std::asin(-T(2,0));
-	double roll  = std::atan2(T(2,1), T(2,2));
-
-	return Pose(
-	  Point(T(0,3), T(1,3), T(2,3)),
-	  Rotate(yaw, pitch, roll)
-	);
-}
-
-
 int main(){
 
 	auto client = cc::Client("localhost", 2000);
@@ -334,37 +321,23 @@ int main(){
 		if(!new_scan){
 			
 			new_scan = true;
-
 			// TODO: (Filter scan using voxel filter)
 			pcl::VoxelGrid<PointT> vg;
 			vg.setInputCloud(scanCloud);
-			double filterRes = 0.5;
+			double filterRes = 1.0;
 			vg.setLeafSize(filterRes, filterRes, filterRes);
-			typename pcl::PointCloud<PointT>::Ptr cloudFiltered (new pcl::PointCloud<PointT>);
 			vg.filter(*cloudFiltered);
 
 			// TODO: Find pose transform by using ICP or NDT matching
 			//pose = ....
-			Eigen::Matrix4d T_vehicle_lidar = transform3D(0, 0, 0, -0.5, 0, 1.8);
-			// Inverse to go lidar->vehicle:
-			Eigen::Matrix4d T_lidar_vehicle = T_vehicle_lidar.inverse();
+			Eigen::Matrix4d transform_matrix = ICP(mapCloud, cloudFiltered, pose, 30);
 
-			// Eigen::Matrix4d transform = transform3D(pose.rotation.yaw, pose.rotation.pitch, pose.rotation.roll, pose.position.x, pose.position.y, pose.position.z);
-			// transform = ICP(mapCloud, cloudFiltered, pose, 3);
-
-			// Find world pose of LiDAR via ICP
-			Eigen::Matrix4d T_world_lidar = ICP(mapCloud, cloudFiltered, pose, 5);
-
-			// If you want vehicle pose to drive the UI:
-			Eigen::Matrix4d T_world_vehicle = T_world_lidar * T_lidar_vehicle;
-
-			// Update the running pose estimate (choose which you want to track/render)
-			pose = PoseFromMatrix(T_world_vehicle);   // or PoseFromMatrix(T_world_lidar)
+			pose = getPose(transform_matrix);
 
 			// TODO: Transform scan so it aligns with ego's actual pose and render that scan
 			// Transform the (filtered) scan into world frame for rendering
 			PointCloudT::Ptr corrected_scan(new PointCloudT);
-			pcl::transformPointCloud(*cloudFiltered, *corrected_scan, T_world_lidar);
+			pcl::transformPointCloud(*cloudFiltered, *corrected_scan, transform_matrix);
 
 
 			// PointCloudT::Ptr corrected_scan (new PointCloudT);
@@ -373,7 +346,8 @@ int main(){
 
 			viewer->removePointCloud("scan");
 			// TODO: Change `scanCloud` below to your transformed scan
-			renderPointCloud(viewer, corrected_scan, "scan", Color(1,0,0) );
+			// renderPointCloud(viewer, scanCloud, "scan", Color(1,0,0) );
+			renderPointCloud(viewer, corrected_scan, "scan", Color(1, 0, 0));
 
 			viewer->removeAllShapes();
 			drawCar(pose, 1,  Color(0,1,0), 0.35, viewer);
